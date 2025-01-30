@@ -19,4 +19,8 @@ public interface ValveControl {
     }
 
     public static Complete Completed = new Complete();
+
+    enum Command {
+        PAUSE, RESUME
+    }
 }

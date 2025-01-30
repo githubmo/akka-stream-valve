@@ -5,10 +5,9 @@ import akka.stream.Attributes;
 import akka.stream.FlowShape;
 import akka.stream.Inlet;
 import akka.stream.Outlet;
-import akka.stream.stage.AbstractGraphStageWithMaterializedValue;
-import akka.stream.stage.GraphStageLogic;
-import akka.stream.stage.OutHandler;
-import akka.stream.stage.InHandler;
+import akka.stream.stage.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -16,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<T, T>, ValveControl> {
+    private static final Logger log = LoggerFactory.getLogger(Valve.class);
     public final Inlet<T> in = Inlet.create("Valve.in");
     public final Outlet<T> out = Outlet.create("Valve.out");
 
@@ -31,9 +31,58 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         // Atomic boolean to track the paused state
         AtomicBoolean isPaused = new AtomicBoolean(false);
 
+        interface CommandHandler {
+            AsyncCallback<ValveControl.Command> getCommandHandler();
+
+            void onAsyncCommand(ValveControl.Command command);
+        }
+
+        abstract class CommandHandlerGraphStageLogic extends GraphStageLogic implements CommandHandler {
+            public CommandHandlerGraphStageLogic(FlowShape<T, T> shape) {
+                super(shape);
+            }
+        }
+
         // Akka GraphStageLogic implementation
-        GraphStageLogic logic = new GraphStageLogic(shape) {
+        CommandHandlerGraphStageLogic logic = new CommandHandlerGraphStageLogic(shape) {
+
+            private final AsyncCallback<ValveControl.Command> commandHandler =
+                    createAsyncCallback(this::onAsyncCommand);
+
+            public AsyncCallback<ValveControl.Command> getCommandHandler() {
+                return commandHandler;
+            }
+
+            public void onAsyncCommand(ValveControl.Command command) {
+                switch (command) {
+                    case PAUSE -> {
+                        if (!isPaused.get()) {
+                            // we pause first then empty what is in buffered so we don't
+                            // have a situation with an element not being processed
+                            isPaused.set(true);
+                            if (isAvailable(in)) {
+                                push(out, grab(in));
+                            }
+                        }
+                    }
+                    case RESUME -> {
+                        if (isPaused.get()) {
+                            // we unpause first so that we don't have a race condition of a downstream
+                            // pulling data faster than we can resume
+                            isPaused.set(false);
+                            if (isAvailable(in)) {
+                                push(out, grab(in));
+                            } else if (isAvailable(out) && hasBeenPulled(in)) {
+                                pull(in);
+                            }
+                        }
+                    }
+                }
+            }
+
             {
+
+
                 setHandler(in, new InHandler() {
                     @Override
                     public void onPush() {
@@ -59,27 +108,16 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         // Control handle for external interaction
         ValveControl control = new ValveControl() {
             private final CompletableFuture<ValveControl.Complete> gate = new CompletableFuture<>();
+            private AsyncCallback<ValveControl.Command> commandHandler = logic.getCommandHandler();
 
             @Override
             public void pause() {
-                // we pause first then empty what is in buffered so we don't
-                // have a situation with an element not being processed
-                isPaused.set(true);
-                if (logic.isAvailable(in)) {
-                    logic.push(out, logic.grab(in));
-                }
+                commandHandler.invoke(ValveControl.Command.PAUSE);
             }
 
             @Override
             public void resume() {
-                // we unpause first so that we don't have a race condition of a downstream
-                // pulling data faster than we can resume
-                isPaused.set(false);
-                if (logic.isAvailable(in)) {
-                    logic.push(out, logic.grab(in));
-                } else if (logic.isAvailable(out) && !logic.hasBeenPulled(in)) {
-                    logic.pull(in);
-                }
+                commandHandler.invoke(Command.RESUME);
             }
 
             @Override
