@@ -8,9 +8,13 @@ import akka.stream.Outlet;
 import akka.stream.stage.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.concurrent.Await;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -26,10 +30,19 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         return shape;
     }
 
+    private boolean isPausedOnStart = false;
+
+    public Valve() {
+    }
+
+    public Valve(boolean isPausedOnStart) {
+        this.isPausedOnStart = isPausedOnStart;
+    }
+
     @Override
     public Pair<GraphStageLogic, ValveControl> createLogicAndMaterializedValuePair(Attributes inheritedAttributes) {
         // Atomic boolean to track the paused state
-        AtomicBoolean isPaused = new AtomicBoolean(false);
+        AtomicBoolean isPaused = new AtomicBoolean(isPausedOnStart);
 
         interface CommandHandler {
             AsyncCallback<ValveControl.Command> getCommandHandler();
@@ -45,6 +58,8 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
 
         // Akka GraphStageLogic implementation
         CommandHandlerGraphStageLogic logic = new CommandHandlerGraphStageLogic(shape) {
+
+            private static final AtomicBoolean hasBeenPulled = new AtomicBoolean(false);
 
             private final AsyncCallback<ValveControl.Command> commandHandler =
                     createAsyncCallback(this::onAsyncCommand);
@@ -72,7 +87,8 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
                             isPaused.set(false);
                             if (isAvailable(in)) {
                                 push(out, grab(in));
-                            } else if (isAvailable(out) && hasBeenPulled(in)) {
+                            } else if ((isAvailable(out) && hasBeenPulled(in)) || hasBeenPulled.get()) {
+                                hasBeenPulled.set(false); //reset the flag
                                 pull(in);
                             }
                         }
@@ -99,6 +115,8 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
                         // Pull upstream when downstream asks for data
                         if (!isPaused.get()) {
                             pull(in);
+                        } else {
+                            hasBeenPulled.set(true);
                         }
                     }
                 });
@@ -108,16 +126,16 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         // Control handle for external interaction
         ValveControl control = new ValveControl() {
             private final CompletableFuture<ValveControl.Complete> gate = new CompletableFuture<>();
-            private AsyncCallback<ValveControl.Command> commandHandler = logic.getCommandHandler();
+            private final AsyncCallback<ValveControl.Command> commandHandler = logic.getCommandHandler();
 
             @Override
-            public void pause() {
-                commandHandler.invoke(ValveControl.Command.PAUSE);
+            public void pause() throws InterruptedException, TimeoutException {
+                Await.result(commandHandler.invokeWithFeedback(ValveControl.Command.PAUSE), scala.concurrent.duration.Duration.apply(1, TimeUnit.SECONDS));
             }
 
             @Override
-            public void resume() {
-                commandHandler.invoke(Command.RESUME);
+            public void resume() throws InterruptedException, TimeoutException {
+                Await.result(commandHandler.invokeWithFeedback(Command.RESUME), scala.concurrent.duration.Duration.apply(1, TimeUnit.SECONDS));
             }
 
             @Override

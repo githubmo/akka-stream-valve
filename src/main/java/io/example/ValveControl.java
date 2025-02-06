@@ -1,13 +1,16 @@
 package io.example;
 
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.TimeoutException;
 
 public interface ValveControl {
     // Pause the stream
-    void pause();
+    void pause() throws InterruptedException, TimeoutException;
+
+    ;
 
     // Resume the stream
-    void resume();
+    void resume() throws InterruptedException, TimeoutException;
 
     // Check if the stream is paused
     boolean isPaused();
