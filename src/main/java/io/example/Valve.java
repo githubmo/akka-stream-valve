@@ -59,7 +59,7 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         // Akka GraphStageLogic implementation
         CommandHandlerGraphStageLogic logic = new CommandHandlerGraphStageLogic(shape) {
 
-            boolean isPaused = isPausedOnStart;
+            private volatile boolean isPaused = isPausedOnStart;
 
             private boolean pullObserved = false;
 
@@ -87,7 +87,7 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
                             // we unpause first so that we don't have a race condition of a downstream
                             // pulling data faster than we can resume
                             isPaused = false;
-                            if (isAvailable(out) || pullObserved) {
+                            if (pullObserved) {
                                 pullObserved = false; //reset the flag
                                 pull(in);
                             }
@@ -132,8 +132,8 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
             }
 
             @Override
-            public void resume() throws InterruptedException, TimeoutException {
-                Await.result(commandHandler.invokeWithFeedback(Command.RESUME), scala.concurrent.duration.Duration.apply(1, TimeUnit.SECONDS));
+            public CompletionStage<Done> resume() throws InterruptedException, TimeoutException {
+                return scala.jdk.javaapi.FutureConverters.asJava(commandHandler.invokeWithFeedback(Command.RESUME));
             }
 
             @Override

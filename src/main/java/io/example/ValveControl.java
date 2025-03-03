@@ -10,7 +10,7 @@ public interface ValveControl {
     CompletionStage<Done> pause() throws InterruptedException, TimeoutException;
 
     // Resume the stream
-    void resume() throws InterruptedException, TimeoutException;
+    CompletionStage<Done> resume() throws InterruptedException, TimeoutException;
 
     // Check if the stream is paused
     boolean isPaused();
