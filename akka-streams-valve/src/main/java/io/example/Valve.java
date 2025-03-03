@@ -9,13 +9,9 @@ import akka.stream.Outlet;
 import akka.stream.stage.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.concurrent.Await;
 
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<T, T>, ValveControl> {
@@ -30,7 +26,6 @@ public class Valve<T> extends AbstractGraphStageWithMaterializedValue<FlowShape<
         return shape;
     }
 
-    // Feedback: this should be final since it is accessed from another thread
     private final boolean isPausedOnStart;
 
     public Valve() {
